@@ -1,0 +1,95 @@
+#!/usr/bin/env node
+
+var path = require('path');
+var fs   = require('fs');
+
+if (process.argv.length !== 3) {
+	console.log('Usage: ' + path.basename(process.argv[1]) + ' JSON-FILE');
+	process.exit(1);
+}
+
+var input_path    = process.argv[2];
+var output_path   = path.basename(input_path, '.json') + '.csv';
+var base_selector = 'results';
+var fields_order  = [
+	'createdAt', 'updatedAt', 'first_name', 'last_name', 'full_name',
+	'legacy_email_key', 'email', 'secondary_email', 'mobile', 'linkedin_url',
+	'categories', 'other_category'
+];
+
+var json = fs.readFileSync(input_path, 'utf8');
+var items = JSON.parse(json);
+
+if (base_selector) {
+	items = items[base_selector]; // TODO: Smarter base selection
+}
+
+if (!Array.isArray(items)) {
+	throw new Error('No array found');
+}
+
+function lexicalCI(a, b) {
+	return a.toLocaleLowerCase().localeCompare(b.toLocaleLowerCase());
+}
+
+function normalize_variable_name(name) {
+	var normalized_name = name.replace(/[A-Z]+/, function(token) {
+		if (token.length === 1) {
+			token = token.toLocaleLowerCase();
+		}
+		return ' ' + token;
+	}).replace(/[^a-z0-9]+/ig, ' ').trim();
+
+	return normalized_name;
+}
+
+var fields = {};
+items.forEach(function(item) {
+	Object.keys(item).forEach(function(field) {
+		fields[field] = true;
+	});
+});
+fields = Object.keys(fields);
+fields.sort(function(a, b) {
+	var a_order = fields_order.indexOf(a);
+	var b_order = fields_order.indexOf(b);
+	if (a_order === -1 && b_order === -1) {
+		return lexicalCI(a, b);
+	} else {
+		if (a_order === -1) a_order = fields_order.length;
+		if (b_order === -1) b_order = fields_order.length;
+		return a_order - b_order;
+	}
+});
+
+var table = items.map(function(item) {
+	var row = fields.map(function(field) {
+		var value = item[field];
+		if (Array.isArray(value)) {
+			value = value.map(function(v) { return '' + [v]; }).sort(lexicalCI).join(',');
+		} else if (typeof(value) === 'object') {
+			value = JSON.stringify(value);
+		} else {
+			value = '' + [value];
+		}
+		return value;
+	});
+	return row;
+});
+
+// Header
+table.unshift(fields.map(normalize_variable_name));
+
+var csv = table.map(function(row) {
+	return row.map(function(value) {
+		if (/[;\u0000-\u001F]/.test(value)) {
+			return JSON.stringify(value);
+		} else {
+			return value;
+		}
+	}).join(';');
+}).join('\n');
+
+var byte_order_mark = '\uFEFF';
+
+fs.writeFileSync(output_path, byte_order_mark + csv, 'utf8');
